@@ -26,8 +26,7 @@ warnings.simplefilter("ignore", category=FutureWarning)
 plt.style.use('fivethirtyeight')
 
 
-geolocator = Nominatim(user_agent="""Mozilla/5.0 
-(Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36""")
+geolocator = Nominatim(user_agent="""Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36""")
 
 
 #set up access
@@ -41,7 +40,7 @@ openai.api_key = "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"
 
 auth = tweepy.OAuthHandler(CONSUMER_KEY, CONSUMER_SECRET)
 auth.set_access_token(ACCESS_KEY, ACCESS_SECRET)
-api = tweepy.API(auth)
+birdapi = tweepy.API(auth)
 
 if 'QUERY' not in st.session_state:
   st.session_state['QUERY'] = ''
@@ -82,7 +81,7 @@ svp = st.text_input(
   #key=st.session_state['QUERY'],
   label="Service Provider",
   value='',
-  max_chars=15,
+  max_chars=25,
   help="Enter the name of the company you would like to view sentiments for.")
 
 
@@ -97,7 +96,7 @@ st.write(f"Company entered: {st.session_state['QUERY']}")
 def get_tweets(new_value: str):
   #global init_tweets 
 
-  tweets = tweepy.Cursor(api.search_tweets,
+  tweets = tweepy.Cursor(birdapi.search_tweets,
                         q=new_value,
                         geocode=GEOCODE,
                         result_type=RESULT_TYPE,
@@ -163,6 +162,12 @@ def clean_tweet_text(text: str):
     text = re.sub(r'RT[\s]+', '', text)  #removing the RT (retweets)
 
     return text
+
+
+# def clean_location(text:str):
+
+#   if text != '':
+#     text = text.capitalize()
 
   
 def build_prompt_from_tweets(column):
@@ -253,29 +258,51 @@ def build_wordcloud(text):
   return final_wordcloud
 
 
-#TODO: currently shows both countries that are in options. 
-# get coordinates of cities or places returned in location column of init_tweets df
+def get_latitude(location):
+    try:
+        address = geolocator.geocode(location)
+        return address.latitude
+    except:
 
-def show_map():
+        return None
 
-  df = pd.DataFrame.from_dict(countries, orient='index', columns=['coordinates'])
+def get_longitude(location):
+    try:
+        address = geolocator.geocode(location)
+        return address.longitude
+    except:
+        return None
 
-  df[['latitude', 'longitude', 'distance']] = df['coordinates'].str.split(',', expand=True)
-  
+
+#TODO: Create function to calculate sentiment score based on whether tweets are positive, neutral, or negative
+#positive:1, neutral:0, negative:-1
+
+#Create a function to get the subjectivity of text
+def getSubjectivity(text):
+  return TextBlob(text).sentiment.subjectivity
+
+#Create a fucntion to get the polarity of text
+def getPolarity(text):
+  return TextBlob(text).sentiment.polarity
 
 
-  df.drop('coordinates', axis=1, inplace=True)
-  df.drop('distance', axis=1, inplace=True)
+def calc_score(polarity_score):
+   #compute the negative, neutral and positive analysis
+  if (polarity_score < 0):
+    return 'Negative'
+  elif polarity_score == 0:
+    return 'Neutral'
+  else:
+    return 'Positive'
 
-  df[['latitude', 'longitude']] = df[['latitude', 'longitude']].astype(float)
 
-  st.write("Map showing...")
-  st.map(df)
+   
 
 if st.button("search"):
 
   if 'QUERY' in st.session_state and st.session_state['QUERY'] != '':
 
+    global init_tweets
     init_tweets = get_tweets(st.session_state['QUERY'])
     print("After Twitter API call")
     
@@ -286,6 +313,13 @@ if st.button("search"):
       init_tweets['source'] = init_tweets['source'].apply(clean_tweet_source)
       init_tweets['text'] = init_tweets['text'].apply(clean_tweet_text)
 
+      init_tweets['Subjectivity'] = init_tweets['text'].apply(getSubjectivity)
+      init_tweets['Polarity'] = init_tweets['text'].apply(getPolarity)
+
+      #create new column called Analysis
+      init_tweets['Analysis'] = init_tweets['Polarity'].apply(calc_score)
+      
+
       full_prompt =  build_prompt_from_tweets(init_tweets['text'])
       #print(full_prompt)
 
@@ -295,19 +329,58 @@ if st.button("search"):
       
       print("After Openai call to summarize text")
 
-      st.write(AI_summary["choices"][0]["text"])
-      show_map()
+      st.success(AI_summary["choices"][0]["text"])
+      #show_map()
       #build_wordcloud(full_prompt)
       init_tweets
+
+      if not init_tweets.empty:
+        st.write(init_tweets.describe())
+
+      global locationdf
+      locationdf = init_tweets.loc[:, ['text','location']]
+      
+      for index, row in locationdf.iterrows():
+        latitude = get_latitude(row['location'])
+        longitude = get_longitude(row['location'])
+        locationdf.loc[index, 'latitude'] = latitude
+        locationdf.loc[index, 'longitude'] = longitude
+
+      #locationdf
+
+      locationdf.drop('location', axis=1, inplace=True)
+      locationdf.drop('text', axis=1, inplace=True)
+
+      latlong = locationdf.dropna()
+
+      latlong.loc[:, ['latitude', 'longitude']]  = latlong[['latitude', 'longitude']].astype(float)
+
+      #latlong
+
+    
+      st.map(latlong)
+
   else:
     st.warning('''🤔 You can start by selecting your country on the right. Then, 
     type a company's name to see a summary of people feel about it's good & services.''')
 
 
 
+# def show_map():
 
-#TODO: Create function to calculate sentiment score based on whether tweets are positive, neutral, or negative
-#positive:1, neutral:0, negative:-1
+#   df = pd.DataFrame.from_dict(locationdf, orient='index', columns=['coordinates'])
+
+#   df[['latitude', 'longitude', 'distance']] = df['coordinates'].str.split(',', expand=True)
+  
+#   df.drop('coordinates', axis=1, inplace=True)
+#   df.drop('distance', axis=1, inplace=True)
+
+#   df[['latitude', 'longitude']] = df[['latitude', 'longitude']].astype(float)
+
+#   st.write("Map showing...")
+#   st.map(df)
+
+
 #TODO: Get all tweets from init_tweets where user is replying to or quoting another tweet
 #TODO: Translate creole tweets to Standard English
 #TODO: Update wordcloud tooltip to show word location usage
