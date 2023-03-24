@@ -1,0 +1,18 @@
+Metadata-Version: 2.1
+Name: streamlit-wordcloud
+Version: 0.1.0
+Summary: This is an interactive Wordcloud component for Streamlit. This is based on React-Wordcloud (https://github.com/chrisrzhou/react-wordcloud).
+Home-page: https://github.com/rezaho/streamlit-wordcloud
+Author: Reza Hosseini
+Author-email: re1372@gmail.com
+License: UNKNOWN
+Platform: UNKNOWN
+Requires-Python: >=3.6
+Description-Content-Type: text/plain
+Requires-Dist: streamlit (>=0.63)
+Requires-Dist: numpy (==1.20.0)
+Requires-Dist: matplotlib (==3.3.4)
+
+UNKNOWN
+
+
