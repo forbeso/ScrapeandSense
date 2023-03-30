@@ -16,10 +16,19 @@ from bs4 import BeautifulSoup
 from stop_words import get_stop_words
 from time import sleep
 import string
-
+import folium
 from langdetect import detect
 from textblob import TextBlob
 from geopy.geocoders import Nominatim
+from folium import Map, Choropleth
+from streamlit_folium import folium_static
+import pathlib as pl
+import os
+import json
+import geojson
+from folium.plugins import HeatMap, MarkerCluster
+import pydeck as pdk
+import random
 
 #disable Future warning messages
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -55,9 +64,11 @@ countries = {
 }
 #print(countries['Jamaica'])
 
+
+
 TWEET_MODE = 'extended'
 
-TWEET_COUNT = 50
+TWEET_COUNT = 40
 RESULT_TYPE = 'recent'
 INCLUDE_ENTITIES = False
 
@@ -91,19 +102,11 @@ st.write(f"Company entered: {st.session_state['QUERY']}")
 
 
 #get tweets and save to dataframe
-
-
 def get_tweets(new_value: str):
   #global init_tweets 
 
-  tweets = tweepy.Cursor(birdapi.search_tweets,
-                        q=new_value,
-                        geocode=GEOCODE,
-                        result_type=RESULT_TYPE,
-                        tweet_mode='extended').items(TWEET_COUNT)
+  tweets = tweepy.Cursor(birdapi.search_tweets,q=new_value,geocode=GEOCODE,result_type=RESULT_TYPE,tweet_mode='extended').items(TWEET_COUNT)
   
-
-
   #loop and and each list to the array postHold
   postHold = []
   for tweet in tweets:
@@ -156,12 +159,12 @@ def clean_tweet_source(a_tag: str):
 
 def clean_tweet_text(text: str):
 
-    text = re.sub(r'https?:\/\/\S+', '', text)  #Remove the hyperlink
-    text = re.sub(r'@[A-Za-z0-9]+', '',text)  #removing mentions - #the r tells python that this is a raw string
-    text = re.sub(r'#', '', text)  #removing hashtags
-    text = re.sub(r'RT[\s]+', '', text)  #removing the RT (retweets)
+  text = re.sub(r'https?:\/\/\S+', '', text)  #Remove the hyperlink
+  text = re.sub(r'@[A-Za-z0-9]+', '',text)  #removing mentions - #the r tells python that this is a raw string
+  text = re.sub(r'#', '', text)  #removing hashtags
+  text = re.sub(r'RT[\s]+', '', text)  #removing the RT (retweets)
 
-    return text
+  return text
 
 
 # def clean_location(text:str):
@@ -260,7 +263,7 @@ def build_wordcloud(text):
 
 def get_latitude(location):
     try:
-        address = geolocator.geocode(location)
+        address = geolocator.geocode(location, timeout=None)
         return address.latitude
     except:
 
@@ -268,7 +271,7 @@ def get_latitude(location):
 
 def get_longitude(location):
     try:
-        address = geolocator.geocode(location)
+        address = geolocator.geocode(location, timeout=None)
         return address.longitude
     except:
         return None
@@ -296,73 +299,144 @@ def calc_score(polarity_score):
     return 'Positive'
 
 
-   
+def get_smiley(sentiment):
+  icon_data = {
+        
+        "width": 242,
+        "height": 242,
+        "anchorY": 242,
+    }
+
+  if sentiment == 'Positive':
+    image_url = "https://img.icons8.com/emoji/512/slightly-smiling-face.png"
+  elif sentiment=='Negative':
+    image_url = "https://img.icons8.com/emoji/512/face-with-symbols-on-mouth.png"
+  else:
+    image_url = "https://img.icons8.com/emoji/512/confused-face.png"
+
+  icon_data['url'] = image_url
+  return icon_data
+
+
+
+def build_map(x, lat,lon):
+  # Data from OpenStreetMap, accessed via osmpy
+  #DATA_URL = "https://raw.githubusercontent.com/ajduberstein/geo_datasets/master/fortune_500.csv"
+
+  data = x
+
+  data.loc[:, 'icon_data'] = data['Analysis'].apply(lambda x: get_smiley(x))
+
+  #TODO: UNCOMMENT
+  #data
+
+  view_state = pdk.data_utils.compute_view(data[["longitude", "latitude"]],0.5)
+
+  icon_layer = pdk.Layer(
+      type="IconLayer",
+      data=data,
+      get_icon="icon_data",
+      get_size=4,
+      size_scale=15,
+      get_position=["longitude", "latitude"],
+      pickable=True,
+  )
+
+  r = pdk.Deck(layers=[icon_layer], initial_view_state=view_state, tooltip={"text": "{location}"})
+  #r.to_html("icon_layer.html")
+  st.pydeck_chart(r)
+
+
+  
 
 if st.button("search"):
+  with st.spinner('Fetching tweets and generating map'):
+    if 'QUERY' in st.session_state and st.session_state['QUERY'] != '':
 
-  if 'QUERY' in st.session_state and st.session_state['QUERY'] != '':
+      global init_tweets
+      init_tweets = get_tweets(st.session_state['QUERY'])
+      print("After Twitter API call")
+      
+      if init_tweets.empty:
+        st.write("No Data Returned")
+      else:
+        #apply clean_tweet_source to the source column
+        init_tweets['source'] = init_tweets['source'].apply(clean_tweet_source)
+        init_tweets['text'] = init_tweets['text'].apply(clean_tweet_text)
 
-    global init_tweets
-    init_tweets = get_tweets(st.session_state['QUERY'])
-    print("After Twitter API call")
-    
-    if init_tweets.empty:
-      st.write("No Data Returned")
+        init_tweets['Subjectivity'] = init_tweets['text'].apply(getSubjectivity)
+        init_tweets['Polarity'] = init_tweets['text'].apply(getPolarity)
+
+        #create new column called Analysis
+        init_tweets['Analysis'] = init_tweets['Polarity'].apply(calc_score)
+        
+
+        full_prompt =  build_prompt_from_tweets(init_tweets['text'])
+        #print(full_prompt)
+
+        AI_summary = generate_phrase(f"""See Tweets about a particular company's services.
+                          Provide an analysis (use emojis too) of how people 
+                          feel (the sentiment) about the companies services: \n\n{full_prompt}""")
+        
+        print("After Openai call to summarize text")
+
+        st.success(AI_summary["choices"][0]["text"])
+        #show_map()
+        #build_wordcloud(full_prompt)
+
+        #TODO: UNCOMMENT
+        #init_tweets
+
+        if not init_tweets.empty:
+          st.write(init_tweets.describe())
+
+        global locationdf
+        locationdf = init_tweets.loc[:, ['text','location','Analysis']]
+        
+        for index, row in locationdf.iterrows():
+          latitude = get_latitude(row['location'])
+          longitude = get_longitude(row['location'])
+
+          #print(latitude,longitude)
+          locationdf.loc[index, 'latitude'] = latitude
+          locationdf.loc[index, 'longitude'] = longitude
+
+        
+
+        #locationdf.drop('location', axis=1, inplace=True)
+        locationdf.drop('text', axis=1, inplace=True)
+
+        locationdf.dropna(inplace=True)
+        
+
+        locationdf.loc[:, ['latitude', 'longitude']]  = locationdf[['latitude', 'longitude']].astype(float)
+
+        countrieslonglat = countries[choice]
+        parts = countrieslonglat.split(",")
+
+        result = ",".join(parts[:2])
+
+        lat, lon = result.split(",")
+
+        lat = float(lat)
+        lon = float(lon)
+        
+        #locationdf
+        x=locationdf.drop_duplicates(subset=['latitude'])
+        # show_map(lat=lat, lon=lon)
+        # Example usage
+      
+
+        #TODO: UNCOMMENT
+        #x
+
+        build_map(x, lat, lon)
+      
+        
+        
     else:
-      #apply clean_tweet_source to the source column
-      init_tweets['source'] = init_tweets['source'].apply(clean_tweet_source)
-      init_tweets['text'] = init_tweets['text'].apply(clean_tweet_text)
-
-      init_tweets['Subjectivity'] = init_tweets['text'].apply(getSubjectivity)
-      init_tweets['Polarity'] = init_tweets['text'].apply(getPolarity)
-
-      #create new column called Analysis
-      init_tweets['Analysis'] = init_tweets['Polarity'].apply(calc_score)
-      
-
-      full_prompt =  build_prompt_from_tweets(init_tweets['text'])
-      #print(full_prompt)
-
-      AI_summary = generate_phrase(f"""See Tweets about a particular company's services.
-                        Provide an analysis (use emojis too) of how people 
-                        feel (the sentiment) about the companies services: \n\n{full_prompt}""")
-      
-      print("After Openai call to summarize text")
-
-      st.success(AI_summary["choices"][0]["text"])
-      #show_map()
-      #build_wordcloud(full_prompt)
-      init_tweets
-
-      if not init_tweets.empty:
-        st.write(init_tweets.describe())
-
-      global locationdf
-      locationdf = init_tweets.loc[:, ['text','location']]
-      
-      for index, row in locationdf.iterrows():
-        latitude = get_latitude(row['location'])
-        longitude = get_longitude(row['location'])
-        locationdf.loc[index, 'latitude'] = latitude
-        locationdf.loc[index, 'longitude'] = longitude
-
-      #locationdf
-
-      locationdf.drop('location', axis=1, inplace=True)
-      locationdf.drop('text', axis=1, inplace=True)
-
-      latlong = locationdf.dropna()
-
-      latlong.loc[:, ['latitude', 'longitude']]  = latlong[['latitude', 'longitude']].astype(float)
-
-      #latlong
-
-    
-      st.map(latlong)
-
-  else:
-    st.warning('''🤔 You can start by selecting your country on the right. Then, 
-    type a company's name to see a summary of people feel about it's good & services.''')
+      st.warning('''🤔 You can start by selecting your country on the right. Then, 
+      type a company's name to see a summary of people feel about it's good & services.''')
 
 
 
