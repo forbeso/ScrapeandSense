@@ -66,12 +66,12 @@ st.set_page_config(layout="wide", page_icon="😑", page_title="Scrape&Sense")
 
 #set up access
 
-CONSUMER_KEY = 'fIDHPjQg0QaCEMDjCKEpURIEM'
-CONSUMER_SECRET = 'Kn2y7W6i16vJUha70ObMzx3aqqJ3ur8hAekS576oGg9majM0HI'
-ACCESS_KEY = '1045452666120351744-UofuQ8nmkMMYg6UyvIfS8vh7VeQclq'
-ACCESS_SECRET = '1R0pMSUmnvR4ANgFB9d2RquYDLDbmhJQURBSUxNkEpba4'
+CONSUMER_KEY = ''
+CONSUMER_SECRET = ''
+ACCESS_KEY = ''
+ACCESS_SECRET = ''
 
-openai.api_key = "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"
+openai.api_key = ""
 
 auth = tweepy.OAuthHandler(CONSUMER_KEY, CONSUMER_SECRET)
 auth.set_access_token(ACCESS_KEY, ACCESS_SECRET)
